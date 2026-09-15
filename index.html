@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hello — Joseph Horton</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+<style>
+  :root { color-scheme: dark; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    height: 100%;
+    background: #000;
+    color: #f4f1ea;
+    overflow: hidden;
+  }
+
+  body {
+    display: grid;
+    place-items: center;
+    font-family: "Instrument Serif", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    cursor: none;
+  }
+
+  /* a soft light that follows the pointer */
+  .glow {
+    position: fixed;
+    top: 0; left: 0;
+    width: 40rem; height: 40rem;
+    margin: -20rem 0 0 -20rem;
+    pointer-events: none;
+    border-radius: 50%;
+    background: radial-gradient(circle closest-side,
+      rgba(255, 238, 200, 0.10),
+      rgba(255, 238, 200, 0.04) 45%,
+      transparent 70%);
+    opacity: 0;
+    transition: opacity 600ms ease;
+    will-change: transform;
+  }
+  body.awake .glow { opacity: 1; }
+
+  .stage {
+    position: relative;
+    text-align: center;
+    padding: 0 6vw;
+    user-select: none;
+  }
+
+  h1 {
+    font-size: clamp(2.75rem, 11vw, 9rem);
+    font-weight: 400;
+    line-height: 1.05;
+    letter-spacing: -0.015em;
+    white-space: nowrap;
+  }
+
+  .line { display: block; }
+  .line.name { font-style: italic; }
+
+  .ch {
+    display: inline-block;
+    will-change: transform, filter;
+    transform: translate3d(0, 0, 0);
+  }
+
+  .hint {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -4.5rem;
+    font-family: ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+    font-size: 0.7rem;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    color: rgba(244, 241, 234, 0.32);
+    transition: opacity 800ms ease;
+  }
+  body.awake .hint { opacity: 0; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ch { transition: none; }
+    .glow { display: none; }
+  }
+</style>
+</head>
+<body>
+  <div class="glow" aria-hidden="true"></div>
+
+  <main class="stage">
+    <h1>
+      <span class="line" data-text="Hello, I'm"></span>
+      <span class="line name" data-text="Joseph Horton"></span>
+    </h1>
+    <p class="hint">move your mouse</p>
+  </main>
+
+<script>
+(() => {
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Split each line into individually animatable characters.
+  const chars = [];
+  document.querySelectorAll('.line').forEach(line => {
+    [...line.dataset.text].forEach(c => {
+      const span = document.createElement('span');
+      span.className = 'ch';
+      span.textContent = c === ' ' ? ' ' : c;
+      line.appendChild(span);
+      chars.push({ el: span, x: 0, y: 0, vx: 0, vy: 0, r: 0, vr: 0, cx: 0, cy: 0 });
+    });
+  });
+
+  const glow = document.querySelector('.glow');
+  const pointer = { x: -9999, y: -9999, active: false };
+
+  const measure = () => {
+    for (const c of chars) {
+      // Read the resting centre with transforms temporarily zeroed out.
+      const prev = c.el.style.transform;
+      c.el.style.transform = 'none';
+      const r = c.el.getBoundingClientRect();
+      c.cx = r.left + r.width / 2;
+      c.cy = r.top + r.height / 2;
+      c.el.style.transform = prev;
+    }
+  };
+  measure();
+  addEventListener('resize', measure);
+  if (document.fonts) document.fonts.ready.then(measure);
+
+  const move = (x, y) => {
+    pointer.x = x; pointer.y = y; pointer.active = true;
+    document.body.classList.add('awake');
+    glow.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+  };
+
+  addEventListener('pointermove', e => move(e.clientX, e.clientY), { passive: true });
+  addEventListener('pointerleave', () => { pointer.active = false; pointer.x = pointer.y = -9999; });
+
+  if (reduced) return;
+
+  const RADIUS = 190;   // how close the cursor has to get
+  const PUSH   = 3400;  // how hard letters are shoved away
+  const SPRING = 0.055; // pull back to the resting spot
+  const DAMP   = 0.82;
+
+  const tick = () => {
+    for (const c of chars) {
+      const dx = c.cx + c.x - pointer.x;
+      const dy = c.cy + c.y - pointer.y;
+      const dist = Math.hypot(dx, dy) || 0.0001;
+
+      if (pointer.active && dist < RADIUS) {
+        const force = (1 - dist / RADIUS) ** 2 * PUSH / dist;
+        c.vx += dx * force * 0.001;
+        c.vy += dy * force * 0.001;
+        c.vr += (dx > 0 ? 1 : -1) * (1 - dist / RADIUS) * 0.9;
+      }
+
+      c.vx += -c.x * SPRING;
+      c.vy += -c.y * SPRING;
+      c.vr += -c.r * SPRING;
+
+      c.vx *= DAMP; c.vy *= DAMP; c.vr *= DAMP;
+      c.x += c.vx; c.y += c.vy; c.r += c.vr;
+
+      const speed = Math.hypot(c.vx, c.vy);
+      const blur = speed > 1.5 ? Math.min((speed - 1.5) * 0.35, 4) : 0;
+
+      c.el.style.transform =
+        `translate3d(${c.x.toFixed(2)}px, ${c.y.toFixed(2)}px, 0) rotate(${c.r.toFixed(2)}deg)`;
+      c.el.style.filter = blur ? `blur(${blur.toFixed(2)}px)` : '';
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
