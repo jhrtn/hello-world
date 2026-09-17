@@ -76,10 +76,10 @@
     const blockCols = Math.max(...lineWidths);
     const blockRows = LINES.length * GLYPH_ROWS + (LINES.length - 1) * LEADING;
 
-    cell = Math.max(6, Math.floor(Math.min(
-      (W * 0.6) / blockCols,
-      (H * 0.4) / blockRows,
-      16
+    cell = Math.max(5, Math.floor(Math.min(
+      (W * 0.5) / blockCols,
+      (H * 0.33) / blockRows,
+      13
     )));
 
     // the grid's phase is derived from the type, so the block is exactly
