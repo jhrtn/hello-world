@@ -3,10 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Hello — Joseph Horton</title>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+<title>Hello — Joseph</title>
 <style>
   :root { color-scheme: dark; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -14,170 +11,213 @@
   html, body {
     height: 100%;
     background: #000;
-    color: #f4f1ea;
     overflow: hidden;
   }
 
-  body {
-    display: grid;
-    place-items: center;
-    font-family: "Instrument Serif", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
-    cursor: none;
+  body { cursor: none; }
+
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
   }
 
-  /* a soft light that follows the pointer */
-  .glow {
-    position: fixed;
-    top: 0; left: 0;
-    width: 40rem; height: 40rem;
-    margin: -20rem 0 0 -20rem;
-    pointer-events: none;
-    border-radius: 50%;
-    background: radial-gradient(circle closest-side,
-      rgba(255, 238, 200, 0.10),
-      rgba(255, 238, 200, 0.04) 45%,
-      transparent 70%);
-    opacity: 0;
-    transition: opacity 600ms ease;
-    will-change: transform;
-  }
-  body.awake .glow { opacity: 1; }
-
-  .stage {
-    position: relative;
-    text-align: center;
-    padding: 0 6vw;
-    user-select: none;
-  }
-
-  h1 {
-    font-size: clamp(2.75rem, 11vw, 9rem);
-    font-weight: 400;
-    line-height: 1.05;
-    letter-spacing: -0.015em;
-    white-space: nowrap;
-  }
-
-  .line { display: block; }
-  .line.name { font-style: italic; }
-
-  .ch {
-    display: inline-block;
-    will-change: transform, filter;
-    transform: translate3d(0, 0, 0);
-  }
-
-  .hint {
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: -4.5rem;
-    font-family: ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
-    font-size: 0.7rem;
-    letter-spacing: 0.32em;
-    text-transform: uppercase;
-    color: rgba(244, 241, 234, 0.32);
-    transition: opacity 800ms ease;
-  }
-  body.awake .hint { opacity: 0; }
-
-  @media (prefers-reduced-motion: reduce) {
-    .ch { transition: none; }
-    .glow { display: none; }
-  }
 </style>
 </head>
 <body>
-  <div class="glow" aria-hidden="true"></div>
-
-  <main class="stage">
-    <h1>
-      <span class="line" data-text="Hello, I'm"></span>
-      <span class="line name" data-text="Joseph Horton"></span>
-    </h1>
-    <p class="hint">move your mouse</p>
-  </main>
+  <canvas id="stage"></canvas>
 
 <script>
 (() => {
+  'use strict';
+
+  /* ---- a 5x7 bitmap font, only the glyphs this page needs ---- */
+  const FONT = {
+    H: ['10001','10001','10001','11111','10001','10001','10001'],
+    E: ['11111','10000','10000','11110','10000','10000','11111'],
+    L: ['10000','10000','10000','10000','10000','10000','11111'],
+    O: ['01110','10001','10001','10001','10001','10001','01110'],
+    I: ['111','010','010','010','010','010','111'],
+    M: ['10001','11011','10101','10001','10001','10001','10001'],
+    J: ['00111','00010','00010','00010','00010','10010','01100'],
+    S: ['01111','10000','10000','01110','00001','00001','11110'],
+    P: ['11110','10001','10001','11110','10000','10000','10000'],
+    ',': ['00','00','00','00','00','01','10'],
+    "'": ['1','1','0','0','0','0','0'],
+  };
+
+  const LINES = ['HELLO,', "I'M", 'JOSEPH'];
+  const GLYPH_ROWS = 7;
+  const TRACKING = 1;   // cells between glyphs
+  const LEADING  = 3;   // cells between lines
+
+  const INK  = '244, 241, 234';
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  // Split each line into individually animatable characters.
-  const chars = [];
-  document.querySelectorAll('.line').forEach(line => {
-    [...line.dataset.text].forEach(c => {
-      const span = document.createElement('span');
-      span.className = 'ch';
-      span.textContent = c === ' ' ? ' ' : c;
-      line.appendChild(span);
-      chars.push({ el: span, x: 0, y: 0, vx: 0, vy: 0, r: 0, vr: 0, cx: 0, cy: 0 });
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d');
+
+  let W = 0, H = 0, cell = 0, offX = 0, offY = 0;
+  const bits = [];   // one per lit pixel of the type
+
+  /* ---- layout: size the grid, then sit the type on it ---- */
+  const layout = () => {
+    W = innerWidth;
+    H = innerHeight;
+
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    canvas.width  = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const lineWidths = LINES.map(line =>
+      [...line].reduce((w, ch) => w + FONT[ch][0].length + TRACKING, 0) - TRACKING
+    );
+    const blockCols = Math.max(...lineWidths);
+    const blockRows = LINES.length * GLYPH_ROWS + (LINES.length - 1) * LEADING;
+
+    cell = Math.max(6, Math.floor(Math.min(
+      (W * 0.6) / blockCols,
+      (H * 0.4) / blockRows,
+      16
+    )));
+
+    // the grid's phase is derived from the type, so the block is exactly
+    // centred and every bit still lands on a cell boundary
+    offX = (W - blockCols * cell) / 2;
+    offY = (H - blockRows * cell) / 2;
+    let i = 0;
+
+    LINES.forEach((line, li) => {
+      const startCol = Math.round((blockCols - lineWidths[li]) / 2);
+      const top = li * (GLYPH_ROWS + LEADING);
+      let col = startCol;
+
+      for (const ch of line) {
+        const glyph = FONT[ch];
+        glyph.forEach((rowBits, r) => {
+          [...rowBits].forEach((bit, c) => {
+            if (bit !== '1') return;
+            const hx = offX + (col + c) * cell;
+            const hy = offY + (top + r) * cell;
+            const b = bits[i];
+            if (b) { b.hx = hx; b.hy = hy; }
+            else bits[i] = { hx, hy, x: hx, y: hy, vx: 0, vy: 0 };
+            i++;
+          });
+        });
+        col += glyph[0].length + TRACKING;
+      }
     });
-  });
 
-  const glow = document.querySelector('.glow');
+    bits.length = i;
+  };
+
+  /* ---- pointer ---- */
   const pointer = { x: -9999, y: -9999, active: false };
+  const wake = (x, y) => {
+    pointer.x = x; pointer.y = y; pointer.active = true;
+  };
+  addEventListener('pointermove', e => wake(e.clientX, e.clientY), { passive: true });
+  addEventListener('pointerleave', () => {
+    pointer.active = false; pointer.x = pointer.y = -9999;
+  });
+  addEventListener('resize', () => { layout(); if (reduced) draw(); });
 
-  const measure = () => {
-    for (const c of chars) {
-      // Read the resting centre with transforms temporarily zeroed out.
-      const prev = c.el.style.transform;
-      c.el.style.transform = 'none';
-      const r = c.el.getBoundingClientRect();
-      c.cx = r.left + r.width / 2;
-      c.cy = r.top + r.height / 2;
-      c.el.style.transform = prev;
+  /* ---- drawing ---- */
+  const snap = (v, off) => Math.round((v - off) / cell) * cell + off;
+
+  const drawGrid = () => {
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = `rgba(${INK}, 0.055)`;
+    ctx.beginPath();
+    for (let c = Math.floor(-offX / cell); c <= Math.ceil((W - offX) / cell); c++) {
+      const x = Math.round(offX + c * cell) + 0.5;
+      ctx.moveTo(x, 0); ctx.lineTo(x, H);
+    }
+    for (let r = Math.floor(-offY / cell); r <= Math.ceil((H - offY) / cell); r++) {
+      const y = Math.round(offY + r * cell) + 0.5;
+      ctx.moveTo(0, y); ctx.lineTo(W, y);
+    }
+    ctx.stroke();
+  };
+
+  const drawCursorCell = () => {
+    if (!pointer.active) return;
+    const x = snap(pointer.x - cell / 2, offX);
+    const y = snap(pointer.y - cell / 2, offY);
+
+    const glow = ctx.createRadialGradient(
+      pointer.x, pointer.y, 0, pointer.x, pointer.y, cell * 9
+    );
+    glow.addColorStop(0, `rgba(${INK}, 0.07)`);
+    glow.addColorStop(1, `rgba(${INK}, 0)`);
+    ctx.fillStyle = glow;
+    ctx.fillRect(pointer.x - cell * 9, pointer.y - cell * 9, cell * 18, cell * 18);
+
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = `rgba(${INK}, 0.4)`;
+    ctx.strokeRect(Math.round(x) + 0.5, Math.round(y) + 0.5, cell - 1, cell - 1);
+  };
+
+  const drawBits = () => {
+    const inset = Math.max(0.5, cell * 0.07);
+    const size = cell - inset * 2;
+
+    for (const b of bits) {
+      // the bit drifts freely, but it is only ever *drawn* in a grid cell
+      const gx = snap(b.x, offX);
+      const gy = snap(b.y, offY);
+      const wander = Math.hypot(gx - b.hx, gy - b.hy) / cell;
+      const alpha = 1 - Math.min(wander / 14, 0.55);
+
+      ctx.fillStyle = `rgba(${INK}, ${alpha.toFixed(3)})`;
+      ctx.fillRect(gx + inset, gy + inset, size, size);
     }
   };
-  measure();
-  addEventListener('resize', measure);
-  if (document.fonts) document.fonts.ready.then(measure);
 
-  const move = (x, y) => {
-    pointer.x = x; pointer.y = y; pointer.active = true;
-    document.body.classList.add('awake');
-    glow.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+  const draw = () => {
+    ctx.clearRect(0, 0, W, H);
+    drawGrid();
+    drawCursorCell();
+    drawBits();
   };
 
-  addEventListener('pointermove', e => move(e.clientX, e.clientY), { passive: true });
-  addEventListener('pointerleave', () => { pointer.active = false; pointer.x = pointer.y = -9999; });
+  /* ---- motion ---- */
+  const SPRING = 0.07;
+  const DAMP   = 0.86;
+  const PUSH   = 32;
 
-  if (reduced) return;
+  const step = () => {
+    const radius = cell * 8.5;
 
-  const RADIUS = 190;   // how close the cursor has to get
-  const PUSH   = 3400;  // how hard letters are shoved away
-  const SPRING = 0.055; // pull back to the resting spot
-  const DAMP   = 0.82;
-
-  const tick = () => {
-    for (const c of chars) {
-      const dx = c.cx + c.x - pointer.x;
-      const dy = c.cy + c.y - pointer.y;
-      const dist = Math.hypot(dx, dy) || 0.0001;
-
-      if (pointer.active && dist < RADIUS) {
-        const force = (1 - dist / RADIUS) ** 2 * PUSH / dist;
-        c.vx += dx * force * 0.001;
-        c.vy += dy * force * 0.001;
-        c.vr += (dx > 0 ? 1 : -1) * (1 - dist / RADIUS) * 0.9;
+    for (const b of bits) {
+      if (pointer.active) {
+        const dx = b.x - pointer.x;
+        const dy = b.y - pointer.y;
+        const dist = Math.hypot(dx, dy) || 0.001;
+        if (dist < radius) {
+          const force = (1 - dist / radius) ** 2 * PUSH / dist;
+          b.vx += dx * force;
+          b.vy += dy * force;
+        }
       }
 
-      c.vx += -c.x * SPRING;
-      c.vy += -c.y * SPRING;
-      c.vr += -c.r * SPRING;
-
-      c.vx *= DAMP; c.vy *= DAMP; c.vr *= DAMP;
-      c.x += c.vx; c.y += c.vy; c.r += c.vr;
-
-      const speed = Math.hypot(c.vx, c.vy);
-      const blur = speed > 1.5 ? Math.min((speed - 1.5) * 0.35, 4) : 0;
-
-      c.el.style.transform =
-        `translate3d(${c.x.toFixed(2)}px, ${c.y.toFixed(2)}px, 0) rotate(${c.r.toFixed(2)}deg)`;
-      c.el.style.filter = blur ? `blur(${blur.toFixed(2)}px)` : '';
+      b.vx += (b.hx - b.x) * SPRING;
+      b.vy += (b.hy - b.y) * SPRING;
+      b.vx *= DAMP;
+      b.vy *= DAMP;
+      b.x += b.vx;
+      b.y += b.vy;
     }
-    requestAnimationFrame(tick);
+
+    draw();
+    requestAnimationFrame(step);
   };
-  requestAnimationFrame(tick);
+
+  layout();
+  if (reduced) draw();
+  else requestAnimationFrame(step);
 })();
 </script>
 </body>
